@@ -1,39 +1,65 @@
 use dirs::config_dir;
 use ini::Ini;
+use serde_json::from_str;
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, read_to_string};
 use std::io::{self, BufRead};
 use std::path::PathBuf;
 use std::process::Command;
 
+fn gnome_to_ghostty_shortcut_map() -> HashMap<String, String> {
+    HashMap::from([
+        ("Primary".to_string(), "ctrl".to_string()), // check os maybe
+        ("Shift".to_string(), "shift".to_string()),
+        ("Alt".to_string(), "alt".to_string()),
+        ("equal".to_string(), "=".to_string()),
+        ("Left".to_string(), "l".to_string()),
+        ("Down".to_string(), "d".to_string()),
+        ("Up".to_string(), "u".to_string()),
+        ("Right".to_string(), "r".to_string()),
+    ])
+}
+
+fn gnome_to_ghostty_action_map() -> HashMap<String, String> {
+    let map_file = "gnome_to_ghostty_action.json";
+    let json_map = read_to_string(map_file).expect("Error opening `gnome_to_ghostty_action.json`.");
+
+    from_str(&json_map).unwrap()
+}
+
 fn convert_gnome_to_ghossty_shortcut(
     gnome_shortcuts: HashMap<String, String>,
 ) -> HashMap<String, String> {
-    let gnome_to_ghostty = HashMap::from([
-        ("Primary", "ctrl"), // check os maybe
-        ("Shift", "shift"),
-        ("Alt", "alt"),
-        ("equal", "="),
-        ("Left", "l"),
-        ("Down", "d"),
-        ("Up", "u"),
-        ("Right", "r"),
-    ]);
+    let gnome_to_ghostty_shortcut = gnome_to_ghostty_shortcut_map();
+    let gnome_to_ghostty_action = gnome_to_ghostty_action_map();
 
     gnome_shortcuts
         .iter()
-        .map(|(command, binding)| {
-            let replaced = binding
+        .flat_map(|(command, binding)| {
+            let ghostty_command = gnome_to_ghostty_action.get(command);
+            match ghostty_command {
+                Some(com) => {
+                    if com.is_empty() {
+                        return None;
+                    }
+                }
+                None => return None,
+            }
+            let ghostty_binding = binding
                 .split(&['>', '<'][..])
                 .filter(|c| !c.is_empty())
-                .map(|gnome_shortcut| {
-                    gnome_to_ghostty
-                        .get(gnome_shortcut)
-                        .copied()
-                        .unwrap_or(gnome_shortcut)
+                .map(|key| {
+                    gnome_to_ghostty_shortcut
+                        .get(key)
+                        .cloned()
+                        .unwrap_or_else(|| key.to_string())
                 })
                 .fold(String::new(), |acc, s| acc + "+" + &s);
-            (command.to_string(), replaced[1..].to_string())
+
+            Some((
+                ghostty_command.unwrap().to_string(),
+                ghostty_binding[1..].to_string(),
+            ))
         })
         .collect()
 }
@@ -86,6 +112,5 @@ fn main() {
     let x = get_gnome_shortcuts();
     let y = convert_gnome_to_ghossty_shortcut(x);
     println!("{:?}", y);
-    let z = get_ghossty_shortcuts(None);
-    println! {"{:?}", z};
+    get_ghossty_shortcuts(None);
 }
