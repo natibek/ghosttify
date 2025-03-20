@@ -7,26 +7,14 @@ use std::io::{self, BufRead};
 use std::path::PathBuf;
 use std::process::Command;
 
-fn gnome_to_ghostty_shortcut_map() -> HashMap<String, String> {
-    HashMap::from([
-        ("Primary".to_string(), "ctrl".to_string()), // check os maybe
-        ("Shift".to_string(), "shift".to_string()),
-        ("Alt".to_string(), "alt".to_string()),
-        ("equal".to_string(), "=".to_string()),
-        ("Left".to_string(), "l".to_string()),
-        ("Down".to_string(), "d".to_string()),
-        ("Up".to_string(), "u".to_string()),
-        ("Right".to_string(), "r".to_string()),
-    ])
-}
-
-static MAP_STRING: &str = include_str!("./gnome_to_ghostty_action.json");
+static MAP_STRING: &str = include_str!("./gnome_to_ghostty.json");
 
 fn convert_gnome_to_ghossty_shortcut(
     gnome_shortcuts: HashMap<String, String>,
 ) -> HashMap<String, String> {
-    let gnome_to_ghostty_shortcut = gnome_to_ghostty_shortcut_map();
-    let gnome_to_ghostty_action: HashMap<String, String> = from_str(MAP_STRING).unwrap();
+    let gnome_to_ghostty: HashMap<String, HashMap<String, String>> = from_str(MAP_STRING).unwrap();
+    let gnome_to_ghostty_shortcut = gnome_to_ghostty.get("keys").unwrap();
+    let gnome_to_ghostty_action = gnome_to_ghostty.get("actions").unwrap();
 
     gnome_shortcuts
         .iter()
@@ -42,14 +30,26 @@ fn convert_gnome_to_ghossty_shortcut(
             }
             let ghostty_binding = binding
                 .split(&['>', '<'][..])
-                .filter(|c| !c.is_empty())
-                .map(|key| {
-                    gnome_to_ghostty_shortcut
-                        .get(key)
-                        .cloned()
-                        .unwrap_or_else(|| key.to_string())
+                .filter(|key| !key.is_empty())
+                .filter_map(|key| {
+                    let mapped = gnome_to_ghostty_shortcut.get(key);
+
+                    match mapped {
+                        Some(ghostty_key) => {
+                            if ghostty_key.is_empty() || ghostty_key == "disabled" {
+                                return None;
+                            } else {
+                                return Some(ghostty_key.to_string());
+                            }
+                        }
+                        None => Some(key.to_string()),
+                    }
                 })
                 .fold(String::new(), |acc, s| acc + "+" + &s);
+
+            if ghostty_binding.is_empty() {
+                return None;
+            }
 
             Some((
                 ghostty_command.unwrap().to_string(),
@@ -105,6 +105,7 @@ fn get_ghossty_shortcuts(ghostty_config: Option<&str>) -> HashMap<String, String
 
 fn main() {
     let x = get_gnome_shortcuts();
+    println!("{:?}", x);
     let y = convert_gnome_to_ghossty_shortcut(x);
     println!("{:?}", y);
     get_ghossty_shortcuts(None);
