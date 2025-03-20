@@ -2,7 +2,7 @@ use dirs::config_dir;
 use ini::Ini;
 use serde_json::from_str;
 use std::collections::HashMap;
-use std::fs::{File, read_to_string};
+use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::PathBuf;
 use std::process::Command;
@@ -20,18 +20,13 @@ fn gnome_to_ghostty_shortcut_map() -> HashMap<String, String> {
     ])
 }
 
-fn gnome_to_ghostty_action_map() -> HashMap<String, String> {
-    let map_file = "gnome_to_ghostty_action.json";
-    let json_map = read_to_string(map_file).expect("Error opening `gnome_to_ghostty_action.json`.");
-
-    from_str(&json_map).unwrap()
-}
+static MAP_STRING: &str = include_str!("./gnome_to_ghostty_action.json");
 
 fn convert_gnome_to_ghossty_shortcut(
     gnome_shortcuts: HashMap<String, String>,
 ) -> HashMap<String, String> {
     let gnome_to_ghostty_shortcut = gnome_to_ghostty_shortcut_map();
-    let gnome_to_ghostty_action = gnome_to_ghostty_action_map();
+    let gnome_to_ghostty_action: HashMap<String, String> = from_str(MAP_STRING).unwrap();
 
     gnome_shortcuts
         .iter()
