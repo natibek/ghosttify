@@ -3,7 +3,7 @@ use dirs::config_dir;
 use ini::Ini;
 use regex::Regex;
 use serde_json::from_str;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -11,6 +11,19 @@ use std::process::Command;
 
 static MAP_STRING: &str = include_str!("./gnome_to_ghostty.json");
 
+/// Convert a gnome shortcut to ghostty using the `gnome_to_ghostty.json` file which provides
+/// mappings for the repsentation of keys used in gnome configurations to ghostty's. gnome
+/// shortcuts surround special keys with angle brackets and don't use any delimiting character
+/// between keys in a shortcut. When converting,
+///     - if no ghostty key is found for the gnome key in the mapping, use the same gnome key,
+///     - if the gnome shortcut is `disabled`, ignore the gnome shortcut,
+///     - if the ghostty key is an empty string, ignore the gnome shortcut (not a supported key).
+/// https://github.com/ghostty-org/ghostty/blob/d6e76858164d52cff460fedc61ddf2e560912d71/src/input/key.zig#L255
+///
+/// Args:
+/// - gnome_shortcut: The gnome shorcut being converted.
+/// - gnome_to_ghostty_shortcut: A hashmap with a mapping from gnome configuration key
+///     representatioin to ghostty's.
 fn convert_gnome_shortcut_to_ghostty(
     gnome_shortcut: &String,
     gnome_to_ghostty_shortcut: &HashMap<String, String>,
@@ -40,6 +53,14 @@ fn convert_gnome_shortcut_to_ghostty(
     Some(ghostty_shortcut[1..].to_string())
 }
 
+/// Converts all the gnome shortcuts to ghostty shortcuts using the
+/// `convert_gnome_shortcut_to_ghostty` function. If the shortcut can not be converted or the
+/// action has no parallel in ghostty, the shortcut is ignore. The conversions for both the keys
+/// and the actions are in the gnome_to_ghostty.json` file.
+///
+/// Args:
+/// - gnome_shortcuts: A hashmap of the gnome shorcuts with the action as the key and shortcut as
+///     the value.
 fn convert_gnome_to_ghostty_shortcuts(
     gnome_shortcuts: HashMap<String, String>,
 ) -> HashMap<String, String> {
@@ -73,6 +94,8 @@ fn convert_gnome_to_ghostty_shortcuts(
         .collect()
 }
 
+/// Get the gnome shortcuts using `dconf dump /org/gnome/terminal/ and produce a map with an
+/// action key and shortcut value.
 fn get_gnome_shortcuts() -> HashMap<String, String> {
     let output = Command::new("sh")
         .arg("-c")
@@ -90,57 +113,86 @@ fn get_gnome_shortcuts() -> HashMap<String, String> {
         .collect::<HashMap<String, String>>()
 }
 
-fn get_ghostty_shortcuts_for_config_file(
-    config_file_name: &str,
-    current_shortcuts: &mut HashMap<String, String>,
-    config_file_re: &Regex,
-    keybinding_re: &Regex,
-) {
-    let config_dir = config_dir().unwrap();
-    let config_file = config_dir.join("ghostty").join(config_file_name);
+/// Gets all the ghostty config files including the main `config` file. The rest are
+/// files provided through the "config-file" option. Using BFS to preserve order logic enforced
+/// by ghostty configuration.
+fn get_config_files() -> Vec<String> {
+    // also check the optional config files with the ? before the quoted name
+    let config_file_re = Regex::new(r#"config-file\s*=\s*(?:"([^"]+)"|([^"]+))\s*"#).unwrap();
+    let ghostty_config_dir = config_dir().unwrap().join("ghostty");
+    let mut config_file_paths = vec!["config".to_string()];
+    let mut stack = VecDeque::from(["config".to_string()]);
 
-    if let Ok(lines) = read_lines(config_file) {
-        for line in lines.map_while(Result::ok) {
-            if let Some(cap) = &config_file_re.captures(&line) {
-                get_ghostty_shortcuts_for_config_file(
-                    &cap[1],
-                    current_shortcuts,
-                    &config_file_re,
-                    &keybinding_re,
-                );
-            } else if let Some(cap) = keybinding_re.captures(&line) {
-                current_shortcuts.insert(cap[2].to_string(), cap[1].to_string());
+    while !stack.is_empty() {
+        let cur_config_dir = stack.pop_front().unwrap();
+
+        if let Ok(lines) = read_lines(ghostty_config_dir.join(cur_config_dir)) {
+            for line in lines.map_while(Result::ok) {
+                if let Some(cap) = config_file_re.captures(&line) {
+                    // the name of the config could be quoted or not
+                    let config_file = cap.get(1).map_or_else(|| &cap[2], |m| m.as_str());
+                    if Path::new(&ghostty_config_dir.join(config_file)).exists() {
+                        config_file_paths.push(config_file.to_string());
+                        stack.push_back(config_file.to_string());
+                    }
+                }
             }
         }
     }
+
+    config_file_paths
 }
 
+/// Get all the shortcuts defined in the ghostty config. This includes keybindings in config files
+/// provided by the "config-file" option. https://ghostty.org/docs/config/reference#config-file
+/// Also, bindings defined later shadow earlier ones if in the same file.
 fn get_ghostty_shortcuts() -> HashMap<String, String> {
-    let config_file_re = Regex::new(r#"config-file\s*=\s*(.*)\s*"#).unwrap();
+    let ghostty_config_dir = config_dir().unwrap().join("ghostty");
     let keybinding_re = Regex::new(r#"keybind\s*=\s*(.*)=\s*(.*)\s*"#).unwrap();
+
     let mut shortcuts: HashMap<String, String> = HashMap::new();
-    get_ghostty_shortcuts_for_config_file(
-        "config",
-        &mut shortcuts,
-        &config_file_re,
-        &keybinding_re,
-    );
+    let config_file_paths = get_config_files();
+
+    for config_file_path in config_file_paths {
+        let config_file = ghostty_config_dir.join(config_file_path);
+
+        if let Ok(lines) = read_lines(config_file) {
+            for line in lines.map_while(Result::ok) {
+                if let Some(cap) = keybinding_re.captures(&line) {
+                    shortcuts.insert(cap[2].to_string(), cap[1].to_string());
+                }
+            }
+        }
+    }
 
     shortcuts
 }
-
-fn print_ghostty_config(converted_gnome_shortcuts: &HashMap<String, String>) {
+/// Print the ghostty shortcuts.
+///
+/// Args:
+/// - shortcuts: map from the action to the keybinding
+fn print_ghostty_shortcuts(shortcuts: &HashMap<String, String>) {
     println!(
         "\t    {}\t{}",
         "Binding".to_string().cyan(),
         "Action".to_string().magenta()
     );
-    for (action, binding) in converted_gnome_shortcuts {
+    for (action, binding) in shortcuts {
         println!("keybind = {}={}", binding.bright_cyan(), action.magenta());
     }
     println!();
 }
 
+/// Updates the ghostty config with converted gnome shortcuts. New bindings are added if
+/// the action does not only have the same binding already.
+///
+/// Args:
+/// - converted_gnome_shortcuts: map from the action to the keybinding of the converted gnome
+///     shortcuts
+/// - ghostty_shortcuts: map from the action to the keybinding for the ghostty config shortcuts.
+///    This accounts for different config files and the order in which bindings
+///                       are stated.
+///
 fn update_ghostty_config(
     converted_gnome_shortcuts: HashMap<String, String>,
     ghostty_shortcuts: HashMap<String, String>,
@@ -195,11 +247,11 @@ where
 
 fn main() {
     let gnome_shortcuts = get_gnome_shortcuts();
-    print_ghostty_config(&gnome_shortcuts);
+    print_ghostty_shortcuts(&gnome_shortcuts);
     let converted_shortcuts = convert_gnome_to_ghostty_shortcuts(gnome_shortcuts);
-    print_ghostty_config(&converted_shortcuts);
+    print_ghostty_shortcuts(&converted_shortcuts);
     let ghostty_shortcuts = get_ghostty_shortcuts();
-    print_ghostty_config(&ghostty_shortcuts);
+    print_ghostty_shortcuts(&ghostty_shortcuts);
 
     update_ghostty_config(converted_shortcuts, ghostty_shortcuts);
 }
