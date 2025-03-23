@@ -8,6 +8,27 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::process::Command;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Add gnome terminal shortcuts to ghostty config in the config-file "gnome-shortcuts".
+    #[arg(short, long, default_value_t = false)]
+    apply: bool,
+    
+    /// If shortcut conflicts with an existing keybinding, don't add to the new config.
+    #[arg(short = 'c', long, default_value_t = false)]
+    avoid_conflict: bool,
+
+    /// Print found non-default ghostty keybindings.
+    #[arg(long, default_value_t = false)]
+    ghostty: bool,
+
+    /// Print gnome shortcuts.
+    #[arg(long, default_value_t = false)]
+    gnome: bool,
+}
 
 static MAP_STRING: &str = include_str!("./gnome_to_ghostty.json");
 
@@ -190,12 +211,13 @@ fn print_ghostty_shortcuts(shortcuts: &HashMap<String, String>) {
 /// - converted_gnome_shortcuts: map from the action to the keybinding of the converted gnome
 ///     shortcuts
 /// - ghostty_shortcuts: map from the action to the keybinding for the ghostty config shortcuts.
-///    This accounts for different config files and the order in which bindings
-///                       are stated.
+///    This accounts for different config files and the order in which bindings are stated.
+/// - avoid_conflict: only apply shortcuts that do not conflict with existing key bindings
 ///
 fn update_ghostty_config(
     converted_gnome_shortcuts: HashMap<String, String>,
     ghostty_shortcuts: HashMap<String, String>,
+    avoid_conflict: bool,
 ) {
     let re = Regex::new(r#"config-file\s*=\s*gnome-shortcuts"#).unwrap();
     let ghostty_config_dir = config_dir().unwrap().join("ghostty");
@@ -228,8 +250,14 @@ fn update_ghostty_config(
             .expect("File Error")
     };
 
+    let keybindings: HashMap<&String, &String> = if avoid_conflict {
+        ghostty_shortcuts.iter().map(|(key, value)| (value, key) ).collect()
+    } else {
+        HashMap::new()
+    }; 
+
     for (action, binding) in &converted_gnome_shortcuts {
-        if !ghostty_shortcuts.contains_key(action) {
+        if (avoid_conflict && (!ghostty_shortcuts.contains_key(action) && !keybindings.contains_key(binding))) || !avoid_conflict {
             gnome_shortcuts_config
                 .write_all(format!("keybind = {}={}\n", binding, action).as_bytes())
                 .unwrap();
@@ -246,12 +274,23 @@ where
 }
 
 fn main() {
-    let gnome_shortcuts = get_gnome_shortcuts();
-    print_ghostty_shortcuts(&gnome_shortcuts);
-    let converted_shortcuts = convert_gnome_to_ghostty_shortcuts(gnome_shortcuts);
-    print_ghostty_shortcuts(&converted_shortcuts);
-    let ghostty_shortcuts = get_ghostty_shortcuts();
-    print_ghostty_shortcuts(&ghostty_shortcuts);
+    let args = Cli::parse();
 
-    update_ghostty_config(converted_shortcuts, ghostty_shortcuts);
+    let gnome_shortcuts = get_gnome_shortcuts();
+    let converted_shortcuts = convert_gnome_to_ghostty_shortcuts(gnome_shortcuts);
+    if args.gnome {
+        println!("{}", "Gnome Shortcuts".italic().bold().bright_blue());
+        print_ghostty_shortcuts(&converted_shortcuts);
+    }
+
+    let ghostty_shortcuts = get_ghostty_shortcuts();
+    if args.ghostty {
+        println!("{}", "Ghostty Shortcuts".italic().bold().bright_blue());
+        print_ghostty_shortcuts(&ghostty_shortcuts);
+    }
+
+    if args.apply {
+        update_ghostty_config(converted_shortcuts, ghostty_shortcuts, args.avoid_conflict);
+       
+    }
 }
