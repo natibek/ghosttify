@@ -278,13 +278,14 @@ fn main() {
 
     let gnome_shortcuts = get_gnome_shortcuts();
     let converted_shortcuts = convert_gnome_to_ghostty_shortcuts(gnome_shortcuts);
-    if args.gnome {
+
+    if args.gnome || (!args.ghostty && !args.gnome) {
         println!("{}", "Gnome Shortcuts".italic().bold().bright_blue());
         print_ghostty_shortcuts(&converted_shortcuts);
     }
 
     let ghostty_shortcuts = get_ghostty_shortcuts();
-    if args.ghostty {
+    if args.ghostty || (!args.ghostty && !args.gnome) {
         println!("{}", "Ghostty Shortcuts".italic().bold().bright_blue());
         print_ghostty_shortcuts(&ghostty_shortcuts);
     }
