@@ -46,7 +46,7 @@ static MAP_STRING: &str = include_str!("./gnome_to_ghostty.json");
 /// - gnome_to_ghostty_shortcut: A hashmap with a mapping from gnome configuration key
 ///     representatioin to ghostty's.
 fn convert_gnome_shortcut_to_ghostty(
-    gnome_shortcut: &String,
+    gnome_shortcut: &str,
     gnome_to_ghostty_shortcut: &HashMap<String, String>,
 ) -> Option<String> {
     let ghostty_shortcut = gnome_shortcut
@@ -58,9 +58,9 @@ fn convert_gnome_shortcut_to_ghostty(
             match mapped {
                 Some(ghostty_key) => {
                     if ghostty_key.is_empty() || ghostty_key == "disabled" {
-                        return None;
+                        None
                     } else {
-                        return Some(ghostty_key.to_string());
+                        Some(ghostty_key.to_string())
                     }
                 }
                 None => Some(key.to_string()),
@@ -102,14 +102,7 @@ fn convert_gnome_to_ghostty_shortcuts(
                 None => return None,
             }
 
-            let ghostty_shortcut = if let Some(shortcut) =
-                convert_gnome_shortcut_to_ghostty(binding, &gnome_to_ghostty_shortcut)
-            {
-                shortcut
-            } else {
-                return None;
-            };
-
+            let ghostty_shortcut = convert_gnome_shortcut_to_ghostty(binding, gnome_to_ghostty_shortcut)?;
             Some((ghostty_action.unwrap().to_string(), ghostty_shortcut))
         })
         .collect()
@@ -231,7 +224,7 @@ fn update_ghostty_config(
 
     let config_found: bool = io::BufReader::new(&config_file)
         .lines()
-        .filter_map(Result::ok)
+        .map_while(Result::ok)
         .any(|line| re.is_match(&line));
 
     let gnome_shortcuts_path = ghostty_config_dir.join("gnome-shortcuts");
@@ -257,7 +250,7 @@ fn update_ghostty_config(
     }; 
 
     for (action, binding) in &converted_gnome_shortcuts {
-        if (avoid_conflict && (!ghostty_shortcuts.contains_key(action) && !keybindings.contains_key(binding))) || !avoid_conflict {
+        if !avoid_conflict || !ghostty_shortcuts.contains_key(action) && !keybindings.contains_key(binding) {
             gnome_shortcuts_config
                 .write_all(format!("keybind = {}={}\n", binding, action).as_bytes())
                 .unwrap();
@@ -279,13 +272,13 @@ fn main() {
     let gnome_shortcuts = get_gnome_shortcuts();
     let converted_shortcuts = convert_gnome_to_ghostty_shortcuts(gnome_shortcuts);
 
-    if args.gnome || (!args.ghostty && !args.gnome) {
+    if args.gnome || !args.ghostty {
         println!("{}", "Gnome Shortcuts".italic().bold().bright_blue());
         print_ghostty_shortcuts(&converted_shortcuts);
     }
 
     let ghostty_shortcuts = get_ghostty_shortcuts();
-    if args.ghostty || (!args.ghostty && !args.gnome) {
+    if args.ghostty || !args.gnome {
         println!("{}", "Ghostty Shortcuts".italic().bold().bright_blue());
         print_ghostty_shortcuts(&ghostty_shortcuts);
     }
