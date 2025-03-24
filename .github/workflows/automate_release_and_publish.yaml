@@ -1,0 +1,46 @@
+name: Publish package to cargo and release to GitHub
+
+on:
+  workflow_dispatch: null
+  workflow_call: null
+  push:
+    branches:
+      - main
+    paths:
+      - '_version'
+
+jobs:
+  publish:
+    name: publish to cargo
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Setup Rust
+        uses: actions/checkout@v4
+      - name: Build and deploy wheels
+        env:
+          CARGO_API_KEY: ${{ secrets.CARGO_T }}
+        run: |
+          cargo login "$CARGO_API_KEY"
+          cargo package
+          cargo publish
+
+  release:
+    name: Publish release on GitHub
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4 # allows workflow to access repo
+      - name: Set date for release title
+        run: echo today=$(date +"%B %d, %Y") >> $GITHUB_ENV # format date and append to env
+      - name: Set version number to most recent change
+        run: echo version=$(cat src/_version | grep -oP '[0-9\.]+') >> $GITHUB_ENV
+      - name: Create and publish release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ env.version }}
+          commit: ${{ github.sha }}
+          name: v${{ env.version }} ${{ env.today }} Release
+          generateReleaseNotes: true
+          makeLatest: true
